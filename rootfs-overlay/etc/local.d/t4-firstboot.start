@@ -1,0 +1,11 @@
+#!/bin/sh
+# one-time: grow rootfs to fill SYSTEM partition
+if [ ! -f /etc/t4-resized ]; then
+  resize2fs /dev/mmcblk0p15 && touch /etc/t4-resized
+fi
+# usb0 (g_ncm loaded via /etc/modules): static ip + dhcp server for the host
+if [ -d /sys/class/net/usb0 ]; then
+  ifconfig usb0 10.42.0.1 netmask 255.255.255.0 up 2>/dev/null
+  echo -e 'interface usb0\nstart 10.42.0.100\nend 10.42.0.120\nmax_leases 4\noption subnet 255.255.255.0\noption lease 86400' > /etc/udhcpd.conf
+  udhcpd /etc/udhcpd.conf 2>/dev/null
+fi

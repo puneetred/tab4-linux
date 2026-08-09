@@ -1,0 +1,70 @@
+From: T4 Linux port
+Subject: [PATCH] bt532_ts: emit classic ABS_X/ABS_Y + BTN_TOUCH for X11/evdev
+
+The Zinitix bt532 touchscreen driver only reports multitouch
+(ABS_MT_*) axes. Xorg's xf86-input-evdev wants a classic absolute
+touchscreen (ABS_X/ABS_Y + BTN_TOUCH) to drive the core pointer and
+emulate clicks for a window manager like XFCE.
+
+This patch mirrors the first finger (slot 0) onto the classic axes and
+toggles BTN_TOUCH on press/release, and registers the classic axes at
+probe time (both orientation branches). Multitouch reporting is left
+intact, so libinput still sees the full MT stream.
+
+Applies to: Sabsabsab/android_kernel_samsung_degas3g (3.10)
+File: drivers/input/touchscreen/bt532_ts.c
+
+--- a/drivers/input/touchscreen/bt532_ts.c
++++ b/drivers/input/touchscreen/bt532_ts.c
+@@ <report loop, finger present, after MT report> @@
+ 		input_report_abs(info->input_dev, ABS_MT_POSITION_X, x);
+ 		input_report_abs(info->input_dev, ABS_MT_POSITION_Y, y);
++		/* T4-X11: drive X pointer from first finger */
++		if (i == 0) {
++			input_report_abs(info->input_dev, ABS_X, x);
++			input_report_abs(info->input_dev, ABS_Y, y);
++			input_report_key(info->input_dev, BTN_TOUCH, 1);
++		}
+ 	} else if (zinitix_bit_test(sub_status, SUB_BIT_UP) ||
+ 		zinitix_bit_test(prev_sub_status, SUB_BIT_EXIST)) {
+ 		...
+ 		input_mt_slot(info->input_dev, i);
+ 		input_mt_report_slot_state(info->input_dev, MT_TOOL_FINGER, 0);
++		/* T4-X11 */
++		if (i == 0)
++			input_report_key(info->input_dev, BTN_TOUCH, 0);
+ 	} else {
+ 		...
+
+@@ <probe, axis registration> @@
+ 	if (pdata->orientation & TOUCH_XY_SWAP) {
+ 		... ABS_MT_POSITION_X/Y ...
++		/* T4-X11: classic axes for Xorg evdev (swapped) */
++		input_set_abs_params(info->input_dev, ABS_Y,
++			info->cap_info.MinX,
++			info->cap_info.MaxX + ABS_PT_OFFSET, 0, 0);
++		input_set_abs_params(info->input_dev, ABS_X,
++			info->cap_info.MinY,
++			info->cap_info.MaxY + ABS_PT_OFFSET, 0, 0);
+ 	} else {
+ 		... ABS_MT_POSITION_X/Y ...
++		/* T4-X11: classic axes for Xorg evdev */
++		input_set_abs_params(info->input_dev, ABS_X,
++			info->cap_info.MinX,
++			info->cap_info.MaxX + ABS_PT_OFFSET, 0, 0);
++		input_set_abs_params(info->input_dev, ABS_Y,
++			info->cap_info.MinY,
++			info->cap_info.MaxY + ABS_PT_OFFSET, 0, 0);
+ 	}
++	set_bit(BTN_TOUCH, info->input_dev->keybit);
+
+Notes / gotchas learned on-device:
+ * With ABS_X/Y present AND BTN_TOUCH set, evdev reports
+   "Found absolute touchscreen" + "Configuring as touchscreen" and the
+   pointer follows the finger with click emulation.
+ * We actually ended up driving X via libinput (udev-tagged
+   ID_INPUT_TOUCHSCREEN=1), which reads the MT stream directly; the
+   classic-axes patch is still useful if you fall back to evdev.
+ * The same input device also carries the capacitive Back (KEY_BACK,
+   158) and Recents (BTN_4, 254) keys; they surface as a second
+   (keyboard) X input device.

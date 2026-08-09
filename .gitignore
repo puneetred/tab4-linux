@@ -1,0 +1,14 @@
+# Large / machine-generated artifacts — not part of the source repo.
+backup/                 # raw eMMC partition dumps (2+ GB)
+dist/                   # build outputs (images, logs, pulled binaries)
+rootfs/                 # unpacked Alpine rootfs working tree
+repo/                   # cloned kernel + pmaports (huge)
+*.img
+*.img.gz
+*.cpio.gz
+*.apk
+*.wav
+*.mp3
+*.so
+.DS_Store
+__pycache__/

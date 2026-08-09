@@ -1,0 +1,13 @@
+#!/usr/bin/expect -f
+# password-ssh runner for the tab: t4ssh.exp "<command>" [user] [pass]
+set cmd [lindex $argv 0]
+set user [lindex $argv 1]
+set pass [lindex $argv 2]
+if {$user eq ""} { set user "root" }
+if {$pass eq ""} { set pass "t4" }
+set timeout 25
+spawn ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password -o PubkeyAuthentication=no $user@10.42.0.1 $cmd
+expect {
+    -re "(P|p)assword:" { send "$pass\r"; exp_continue }
+    eof
+}

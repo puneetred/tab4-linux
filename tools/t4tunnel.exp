@@ -1,0 +1,12 @@
+#!/usr/bin/expect -f
+# Persistent reverse-tunnel: tab's 127.0.0.1:8888 -> dl-cdn.alpinelinux.org:80
+set timeout -1
+spawn ssh -R 8080:dl-cdn.alpinelinux.org:80 \
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    -o PreferredAuthentications=password -o PubkeyAuthentication=no \
+    -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+    root@10.42.0.1 "sleep 100000"
+expect {
+    -re "(P|p)assword:" { send "t4\r"; exp_continue }
+    eof
+}

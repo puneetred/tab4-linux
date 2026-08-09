@@ -1,0 +1,16 @@
+#!/sbin/openrc-run
+description="T4 desktop autostart"
+depend() {
+	need dbus local
+	after firewall
+}
+start() {
+	ebegin "Starting T4 desktop"
+	start-stop-daemon --start --background --make-pidfile --pidfile /run/t4x.pid --exec /usr/bin/startx -- :0 vt07
+	eend $?
+}
+stop() {
+	ebegin "Stopping T4 desktop"
+	pkill Xorg
+	eend 0
+}

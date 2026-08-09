@@ -1,0 +1,4 @@
+#!/bin/sh
+# power on Marvell sd8887 radio + set sta mode (from pmos)
+[ -e /sys/devices/platform/sd8x-rfkill/pwr_ctrl ] && echo 1 > /sys/devices/platform/sd8x-rfkill/pwr_ctrl
+[ -e /proc/mwlan/config ] && echo drv_mode=1 > /proc/mwlan/config

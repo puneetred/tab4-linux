@@ -1,0 +1,74 @@
+#!/bin/busybox sh
+# T4 Linux initramfs init - stage 1 of real Linux boot
+/bin/busybox --install -s /bin
+export PATH=/bin:/sbin
+mount -t devtmpfs devtmpfs /dev 2>/dev/null
+mkdir -p /proc /sys /newroot /dev/pts
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devpts devpts /dev/pts 2>/dev/null
+echo "T4: initramfs alive: $(uname -a)" > /dev/console
+
+setup_usb_debug() {
+  # primary: CDC-NCM ethernet gadget (macOS native support)
+  insmod /lib/g_ncm.ko 2>/dev/null
+  i=0; while [ $i -lt 20 ] && [ ! -d /sys/class/net/usb0 ]; do sleep 0.25; i=$((i+1)); done
+  if [ -d /sys/class/net/usb0 ]; then
+    ifconfig usb0 10.42.0.1 netmask 255.255.255.0 up
+    udhcpd /etc/udhcpd.conf 2>/dev/null
+    telnetd -l /bin/sh -p 2323
+    echo "T4: usb net up: telnet 10.42.0.1 2323" > /dev/console
+    return 0
+  fi
+  echo "T4: usb net FAILED" > /dev/console
+  # fallback: samsung android gadget (rndis+acm)
+  G=/sys/class/android_usb/android0
+  [ -d "$G" ] || { echo "t4: no usb gadget available" > /dev/kmsg; return 1; }
+  echo 0 > $G/enable
+  echo 04e8 > $G/idVendor
+  echo 6860 > $G/idProduct
+  echo rndis,acm > $G/functions
+  echo 1 > $G/enable
+  sleep 2
+  ifconfig usb0 10.42.0.1 netmask 255.255.255.0 up 2>/dev/null
+  udhcpd /etc/udhcpd.conf 2>/dev/null
+  telnetd -l /bin/sh -p 2323 2>/dev/null
+  while true; do sh < /dev/ttyGS0 > /dev/ttyGS0 2>&1; sleep 1; done &
+  echo "t4: usb debug up (android gadget): telnet 10.42.0.1 2323" > /dev/kmsg
+}
+
+# start debug network FIRST so it survives switch_root (telnetd runs from RAM)
+setup_usb_debug
+
+# wait for eMMC partitions to appear
+i=0
+while [ $i -lt 60 ]; do
+  [ -b /dev/mmcblk0p15 ] && break
+  sleep 0.25; i=$((i+1))
+done
+echo "t4: eMMC wait loop done ($i)" > /dev/kmsg
+ls -l /dev/mmcblk0* > /dev/kmsg 2>/dev/null
+
+# try to mount real rootfs (SYSTEM partition)
+ROOT_OK=0
+if [ -b /dev/mmcblk0p15 ]; then
+  mount -t ext4 -o rw,noatime /dev/mmcblk0p15 /newroot 2>/dev/null && ROOT_OK=1
+fi
+
+# only switch_root into a rootfs WE built (marker file), never into Android
+if [ "$ROOT_OK" = 1 ] && [ -f /newroot/etc/t4-rootfs ] && [ -x /newroot/sbin/init ]; then
+  mkdir -p /newroot/boot 2>/dev/null
+  dmesg > /newroot/boot/t4-dmesg-initramfs.txt 2>/dev/null
+  echo "T4: switching root to real Linux rootfs" > /dev/console
+  mount --move /dev /newroot/dev 2>/dev/null
+  mount --move /proc /newroot/proc 2>/dev/null
+  mount --move /sys /newroot/sys 2>/dev/null
+  exec switch_root /newroot /sbin/init
+fi
+
+echo "T4: NO LINUX ROOTFS (mount=$ROOT_OK) - initramfs debug shell" > /dev/console
+# keep a shell on the framebuffer console forever
+while true; do
+  setsid cttyhack sh
+  sleep 1
+done

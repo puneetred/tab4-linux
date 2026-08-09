@@ -1,0 +1,16 @@
+#!/bin/sh
+# T4 speaker volume via DAC channel-3 output level (0..255).
+# The 88pm805 codec readback path is unreliable, so track state in a file.
+C=PM805_CODEC_VOL_SEL_CHANNEL_3
+F=/run/t4vol
+[ -f "$F" ] || echo 183 > "$F"
+cur=$(cat "$F")
+case "$1" in
+  up)   new=$((cur+24));;
+  down) new=$((cur-24));;
+  *)    new=$cur;;
+esac
+[ "$new" -gt 255 ] && new=255
+[ "$new" -lt 0 ] && new=0
+echo "$new" > "$F"
+amixer cset name="$C" "$new" >/dev/null 2>&1
