@@ -16,7 +16,7 @@ Android installation and is intended for hardware you are prepared to erase.
 |---|---|
 | Model | Samsung Galaxy Tab 4 7.0, SM-T231 (`degas3g`) |
 | SoC | Marvell PXA1088, dual-core Cortex-A7 (ARMv7), NEON/VFPv3 |
-| GPU | Vivante GC1000 (unused — no driver on 3.10) |
+| GPU | Vivante GC1000 (galcore driver in-tree; stock blobs reverse-engineered — see [docs/12-gpu.md](docs/12-gpu.md)) |
 | RAM | 1.5 GB |
 | Display | 7" 800×1280, `mmp-fb` framebuffer |
 | Touch | Zinitix bt532 (`sec_touchscreen`), capacitive |
@@ -42,7 +42,7 @@ Android installation and is intended for hardware you are prepared to erase.
 | Power button | Partial | key events delivered; binding pending |
 | Home / Back / Recent | Partial | keycodes mapped; actions not finalized |
 | Wi-Fi (SD8887) | Not working | firmware installed; driver bring-up pending |
-| GPU acceleration | Not applicable | no open driver for GC1000 on 3.10; software rendering |
+| GPU acceleration | In progress | galcore 4.6.9.8290 loaded & probed; blobs verified (version-coupling proven); bionic runtime layer working; stock libGAL round-trips real ioctls (HAL construct + chip/memory queries OK) — [docs/12-gpu.md](docs/12-gpu.md) |
 
 ## Requirements
 
@@ -113,9 +113,13 @@ See [`docs/README.md`](docs/README.md) for the full index. Notable entries:
 
 ## Known limitations
 
-* **No GPU acceleration.** The Vivante GC1000 has no open-source driver for
-  kernel 3.10 and no compatible vendor blob for this X/ABI. All rendering is
-  performed in software; video playback and compositing are not practical.
+* **GPU acceleration in progress.** The Vivante GC1000 has no open-source
+  driver for kernel 3.10, so the stock Android blobs are being ported instead
+  (`docs/12-gpu.md`). Kernel driver (galcore 4.6.9.8290) is loaded and the
+  kernel↔blob contract is verified; the bionic runtime layer works on Alpine
+  and the stock `libGAL.so` already round-trips real ioctls (construct, chip
+  identity, video memory). Next milestone: EGL bring-up. Rendering remains
+  software until then.
 * **Kernel 3.10.** Precludes systemd-based distributions (systemd requires
   ≥4.15). Init systems must be OpenRC, runit, or sysvinit.
 * **Wi-Fi** is not yet operational (see `docs/11-networking.md`).

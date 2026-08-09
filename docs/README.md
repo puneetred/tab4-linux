@@ -16,6 +16,7 @@ Read in this order for the full build, or jump to what you need.
 | [09-audio.md](09-audio.md) | 88pm805 manual codec bring-up, volume |
 | [10-buttons.md](10-buttons.md) | power/vol/home/back keycodes + bindings |
 | [11-networking.md](11-networking.md) | USB-NCM, ssh, package plumbing, WiFi TODO, next distros |
+| [12-gpu.md](12-gpu.md) | **GPU port**: kernel contract probe, stock-blob extraction, stages 0–6 |
 | [99-debugging.md](99-debugging.md) | Methodology: core dumps, NT_FILE, regmap, nc plumbing |
 
 ## Common pitfalls
