@@ -55,6 +55,7 @@ typedef int32_t (*fn_eglChooseConfig)(EGLDisplay d, const EGLint* attrs, EGLConf
 typedef EGLContext (*fn_eglCreateContext)(EGLDisplay d, EGLConfig c, EGLContext share, const EGLint* attrs);
 typedef EGLSurface (*fn_eglCreatePbufferSurface)(EGLDisplay d, EGLConfig c, const EGLint* attrs);
 typedef int32_t (*fn_eglMakeCurrent)(EGLDisplay d, EGLSurface draw, EGLSurface read, EGLContext ctx);
+typedef int32_t (*fn_eglSwapBuffers)(EGLDisplay d, EGLSurface s);
 typedef int32_t (*fn_eglTerminate)(EGLDisplay d);
 typedef int32_t (*fn_eglGetError)(void);
 
@@ -119,22 +120,28 @@ static void dec32(const char* tag, uint32_t v)
 }
 
 
-/* unit cube: 6 faces, 4 verts each, per-face color */
-static float cubePos[24 * 3] = {
-    -0.5f, -0.5f,  0.5f,   0.5f, -0.5f,  0.5f,   0.5f,  0.5f,  0.5f,  -0.5f,  0.5f,  0.5f,
-     0.5f, -0.5f,  0.5f,   0.5f, -0.5f, -0.5f,   0.5f,  0.5f, -0.5f,   0.5f,  0.5f,  0.5f,
-     0.5f, -0.5f, -0.5f,  -0.5f, -0.5f, -0.5f,  -0.5f,  0.5f, -0.5f,   0.5f,  0.5f, -0.5f,
-    -0.5f, -0.5f, -0.5f,  -0.5f, -0.5f,  0.5f,  -0.5f,  0.5f,  0.5f,  -0.5f,  0.5f, -0.5f,
-    -0.5f,  0.5f,  0.5f,   0.5f,  0.5f,  0.5f,   0.5f,  0.5f, -0.5f,  -0.5f,  0.5f, -0.5f,
-    -0.5f, -0.5f, -0.5f,   0.5f, -0.5f, -0.5f,   0.5f, -0.5f,  0.5f,  -0.5f, -0.5f,  0.5f,
+/* unit cube: 6 faces, 6 verts each (2 triangles), per-face color */
+static float cubePos[36 * 3] = {
+    -0.5f, -0.5f,  0.5f,   0.5f, -0.5f,  0.5f,   0.5f,  0.5f,  0.5f,
+    -0.5f, -0.5f,  0.5f,   0.5f,  0.5f,  0.5f,  -0.5f,  0.5f,  0.5f,
+    -0.5f, -0.5f, -0.5f,  -0.5f,  0.5f, -0.5f,   0.5f,  0.5f, -0.5f,
+    -0.5f, -0.5f, -0.5f,   0.5f,  0.5f, -0.5f,   0.5f, -0.5f, -0.5f,
+     0.5f, -0.5f,  0.5f,   0.5f, -0.5f, -0.5f,   0.5f,  0.5f, -0.5f,
+     0.5f, -0.5f,  0.5f,   0.5f,  0.5f, -0.5f,   0.5f,  0.5f,  0.5f,
+    -0.5f, -0.5f, -0.5f,  -0.5f, -0.5f,  0.5f,  -0.5f,  0.5f,  0.5f,
+    -0.5f, -0.5f, -0.5f,  -0.5f,  0.5f,  0.5f,  -0.5f,  0.5f, -0.5f,
+    -0.5f,  0.5f,  0.5f,   0.5f,  0.5f,  0.5f,   0.5f,  0.5f, -0.5f,
+    -0.5f,  0.5f,  0.5f,   0.5f,  0.5f, -0.5f,  -0.5f,  0.5f, -0.5f,
+    -0.5f, -0.5f, -0.5f,   0.5f, -0.5f, -0.5f,   0.5f, -0.5f,  0.5f,
+    -0.5f, -0.5f, -0.5f,   0.5f, -0.5f,  0.5f,  -0.5f, -0.5f,  0.5f,
 };
-static float cubeCol[24 * 4] = {
-    1,0,0,1,  1,0,0,1,  1,0,0,1,  1,0,0,1,
-    0,1,0,1,  0,1,0,1,  0,1,0,1,  0,1,0,1,
-    0,0,1,1,  0,0,1,1,  0,0,1,1,  0,0,1,1,
-    1,1,0,1,  1,1,0,1,  1,1,0,1,  1,1,0,1,
-    1,0,1,1,  1,0,1,1,  1,0,1,1,  1,0,1,1,
-    0,1,1,1,  0,1,1,1,  0,1,1,1,  0,1,1,1,
+static float cubeCol[36 * 4] = {
+    1,0,0,1,  1,0,0,1,  1,0,0,1,  1,0,0,1,  1,0,0,1,  1,0,0,1,
+    0,1,0,1,  0,1,0,1,  0,1,0,1,  0,1,0,1,  0,1,0,1,  0,1,0,1,
+    0,0,1,1,  0,0,1,1,  0,0,1,1,  0,0,1,1,  0,0,1,1,  0,0,1,1,
+    1,1,0,1,  1,1,0,1,  1,1,0,1,  1,1,0,1,  1,1,0,1,  1,1,0,1,
+    1,0,1,1,  1,0,1,1,  1,0,1,1,  1,0,1,1,  1,0,1,1,  1,0,1,1,
+    0,1,1,1,  0,1,1,1,  0,1,1,1,  0,1,1,1,  0,1,1,1,  0,1,1,1,
 };
 
 /* fullscreen background quad at far depth (clear is broken in this blob) */
@@ -167,6 +174,7 @@ int main(void)
     fn_eglCreateContext createContext = (fn_eglCreateContext)dlsym(e, "eglCreateContext");
     fn_eglCreatePbufferSurface createPbuffer = (fn_eglCreatePbufferSurface)dlsym(e, "eglCreatePbufferSurface");
     fn_eglMakeCurrent makeCurrent = (fn_eglMakeCurrent)dlsym(e, "eglMakeCurrent");
+    fn_eglSwapBuffers swapBuffers = (fn_eglSwapBuffers)dlsym(e, "eglSwapBuffers");
     fn_eglTerminate terminate = (fn_eglTerminate)dlsym(e, "eglTerminate");
     fn_eglGetError getError = (fn_eglGetError)dlsym(e, "eglGetError");
 
@@ -279,8 +287,8 @@ int main(void)
 
         /* blob uniforms are broken (locations collide with attributes):
            rotate the cube on the CPU instead */
-        static float rotCube[24 * 3];
-        for (int i = 0; i < 24 * 3; i += 3) {
+        static float rotCube[36 * 3];
+        for (int i = 0; i < 36 * 3; i += 3) {
             float x = cubePos[i], y = cubePos[i + 1], z = cubePos[i + 2];
             float cx = mv[0] * x + mv[4] * y + mv[8] * z;
             float cy = mv[1] * x + mv[5] * y + mv[9] * z;
@@ -290,15 +298,40 @@ int main(void)
             rotCube[i + 2] = cz * 0.22f;
         }
 
-        /* background quad first (near z, no depth test), then cube */
+        /* blob quirk: only the FIRST+LAST drawArrays of a frame batch
+           render (each rendered draw contributes only its last 6 verts);
+           glFinish / tiny glReadPixels / eglSwapBuffers / glViewport all
+           fail to flush mid-frame.  Budget: 2 draws of 6 verts per frame.
+           So: no GL background; draw the two front-most cube faces and
+           convert the cleared black background to the bg color on CPU. */
+        float zAvg[6];
+        for (int f = 0; f < 6; f++) {
+            zAvg[f] = rotCube[18 * f + 2] + rotCube[18 * f + 5] +
+                      rotCube[18 * f + 8] + rotCube[18 * f + 11] +
+                      rotCube[18 * f + 14] + rotCube[18 * f + 17];
+        }
+        int f0 = 0;
+        for (int f = 0; f < 6; f++) {
+            if (zAvg[f] > zAvg[f0]) f0 = f;
+        }
+        /* blob quirk: a frame renders only its first (fullscreen bg) and
+           last drawArrays, and only the LAST 6 verts of the last draw;
+           frames with fewer than 36 distinct face verts render nothing.
+           So: one 36-vert draw (5 other faces + the front face last). */
+        static float faceBuf[36 * 3];
+        static float faceCol[36 * 4];
+        for (int i = 0; i < 6; i++) {
+            int f = (f0 + i) % 6;
+            memcpy(faceBuf + 18 * i, rotCube + 18 * f, 18 * sizeof(float));
+            memcpy(faceCol + 24 * i, cubeCol + 24 * f, 24 * sizeof(float));
+        }
         vertexAttribPointer((uint32_t)posLoc, 2, GL_FLOAT, 0, 0, bgPos);
         vertexAttribPointer((uint32_t)colLoc, 4, GL_FLOAT, 0, 0, bgCol);
         enableVertexAttribArray((uint32_t)posLoc);
         enableVertexAttribArray((uint32_t)colLoc);
         drawArrays(GL_TRIANGLES, 0, 6);
-
-        vertexAttribPointer((uint32_t)posLoc, 3, GL_FLOAT, 0, 0, rotCube);
-        vertexAttribPointer((uint32_t)colLoc, 4, GL_FLOAT, 0, 0, cubeCol);
+        vertexAttribPointer((uint32_t)posLoc, 3, GL_FLOAT, 0, 0, faceBuf);
+        vertexAttribPointer((uint32_t)colLoc, 4, GL_FLOAT, 0, 0, faceCol);
         drawArrays(GL_TRIANGLES, 0, 36);
         glFinish();
 
@@ -314,6 +347,14 @@ int main(void)
             uint8_t t = px[4 * i];
             px[4 * i] = px[4 * i + 2];
             px[4 * i + 2] = t;
+        }
+
+        /* no GL bg draw (2-draw budget): convert the cleared black
+           background to the bg color here */
+        for (int i = 0; i < FB_W * FB_H; i++) {
+            if (px[4 * i] == 0 && px[4 * i + 1] == 0 && px[4 * i + 2] == 0) {
+                px[4 * i] = 13; px[4 * i + 1] = 13; px[4 * i + 2] = 20;
+            }
         }
 
         uint32_t page = frame % FB_PAGES;

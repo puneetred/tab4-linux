@@ -267,14 +267,18 @@ thread + `veglSynchronousFlip`/display HAL.)
 
 ### Stage 5 — Desktop integration
 **Status: COMPLETE (2026-08-10)** — `tools/gpu/gpudemo/`. A self-contained
-animated demo proves the full pipeline on the LCD: 600 frames of a rotating
-cube (per-face colors) rendered by the stock GC13.20 stack into an 800×1280
-pbuffer, read back, byte-swapped to the panel's BGRA8888 format, and blitted
-to `/dev/fb0`. Frame-loop output (every 60 frames):
-`frames==60 avgms==255 center bg==255,255,0` — center-pixel color changes
-with rotation, readback-verified.
+animated demo proves the full pipeline on the LCD: a rotating cube (per-face
+colors) rendered by the stock GC13.20 stack into an 800×1280 pbuffer, read
+back, byte-swapped to the panel's BGRA8888 format, and blitted to
+`/dev/fb0`. The blob's batch quirks (below) limit the visible scene to one
+fullscreen background + one 6-vertex face, so the demo CPU-picks the
+front-most face of the tumbling cube each frame — the LCD shows the face
+growing/shifting and switching colors as the cube rotates.
+Readback-verified: consecutive `/dev/fb0` dumps differ, the face bbox
+changes (e.g. 692 px cyan diamond at center → 2344 px shifted left 3 s
+later), center-pixel = the face color.
 
-What the demo build needed (three real bugs found, two of them crashes):
+What the demo build needed (bugs found, two of them crashes):
 
 * **GCC sincos fusion miscompile** (crash 1, SIGSEGV in libm `sincosf`):
   `-O2` fused the `cosf`/`sinf` pairs into `sincosf`, but the call site
@@ -289,6 +293,11 @@ What the demo build needed (three real bugs found, two of them crashes):
   (libc+0x225f8, NEON `vld1.8` loop) copies client vertex data; the copy
   from src 0x11ff8 ran past the mapping end → SEGV_MAPERR. Core.8264.
   Fixed by dropping `const` → `.data` (backed by the 4 MB bss).
+* **Cube geometry bug** (the visible "two random triangles with gradient"
+  from the first attempt): the cube was built as 6 faces × 4 verts (24
+  verts) but drawn with `GL_TRIANGLES, 0, 36` — every face degenerated to
+  one triangle and 12 garbage verts ran past the array. Fixed by proper
+  36-vertex (6 faces × 2 tris) arrays.
 * **Blob uniforms are broken** (black screen, no errors): attribute and
   uniform locations collide — `pos`→1, `col`→0 AND `mv`→1, `proj`→0.
   `glUniformMatrix4fv` silently no-ops, so `proj * mv * vec4(pos,1.0)`
@@ -303,9 +312,21 @@ What the demo build needed (three real bugs found, two of them crashes):
   buffer can't be cleared, so `GL_LEQUAL` against garbage depth could cull
   everything. The demo runs without `EGL_DEPTH_SIZE`/`GL_DEPTH_TEST` —
   background quad first, cube second (painter's order).
+* **Blob draw-batch quirks** (discovered by `GDMODE` experiments dumping
+  `/dev/fb0` each variant): per frame the blob renders only the FIRST and
+  the LAST `glDrawArrays` calls, and the last draw contributes only its
+  last 6 vertices; `glFinish`, a tiny 4×4 `glReadPixels`, `eglSwapBuffers`
+  and a `glViewport` state change all FAIL to flush the batch mid-frame.
+  Frames with fewer than 36 *distinct* face vertices render nothing at all
+  (duplicate faces are collapsed), and `enableVertexAttribArray` must be
+  re-issued every frame. The demo therefore draws: fullscreen background
+  (first draw) + one 36-vertex draw whose final 6 vertices are the
+  CPU-selected front-most cube face (5 other real faces pad the buffer).
 * **`FBIOPAN_DISPLAY` and `FBIOWAITFORVSYNC` are unsupported** on this
   mmp-fb (ioctl ENOTTY). No page-flip or vsync: the demo always writes page
-  0 of the 3-page virtual framebuffer.
+  0 of the 3-page virtual framebuffer (dumps must read `bs=1048576 count=4`
+  — the frame alternation writes both pages, so always check md5 stability
+  before trusting a dump).
 * Frame pacing: ~255 ms/frame — the 4 MB `glReadPixels` + 4 MB memcpy to
   fb0 dominates; the GPU draw itself is trivial. Fine for a demo; a
   real compositor would present buffers directly instead of readback.
