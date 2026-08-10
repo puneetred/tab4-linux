@@ -1,21 +1,22 @@
 # 12 — GPU acceleration: Vivante GC1000 via stock ROM blobs
 
-**Status: stages 0–4 complete (2026-08-10).** The kernel side works
+**Status: stages 0–5 complete (2026-08-10).** The kernel side works
 (galcore 4.6.9.8290 loaded, `/dev/galcore` + `/dev/ion` present, contract
 probe verified on device). Clean stock blobs (`T231XXU0ANE2`) are extracted
 and version-coupling is proven. The bionic runtime compatibility layer
 (stage 2) is working on Alpine, and the stock **libGAL.so runs natively and
 round-trips real ioctls to the kernel** (stage 3). **EGL 1.4 + GLES2 from
 the stock blobs now run on Alpine and render to the LCD**: offscreen
-triangles/pbuffers verified via readback, and a fullscreen 800×1280 GPU
-render is blitted to `/dev/fb0` (stage 4).
+triangles/pbuffers verified via readback, a fullscreen 800×1280 GPU
+render is blitted to `/dev/fb0` (stage 4), and a 600-frame animated
+rotating-cube demo runs on the LCD (stage 5).
 
 This document is the master plan. Work proceeds piece by piece, each stage
 verifiable on the device.
 
 ---
 
-## 1. Verified current state (2026-08-09)
+## 1. Verified current state (2026-08-10)
 
 | Component | State | Evidence |
 |---|---|---|
@@ -31,6 +32,8 @@ verifiable on the device.
 | Bionic compat layer | **Working** | `/stage2` tree, `/system → /stage2`, `/dev/__properties__` fixed; mksh + toolbox native on Alpine |
 | **libGAL bring-up (stage 3)** | **Working** | stock `libGAL.so` dlopen'd from Alpine; `gcoOS_ModuleConstructor`/`gcoHAL_Construct`/queries OK; real ioctls to kernel |
 | **EGL/GLES2 (stage 4)** | **Working** | `libEGL_MRVL` + `libGLESv2_MRVL` (GC13.20) run on Alpine: display init, configs, contexts, pbuffers, shaders, draws, readback all OK; fullscreen render blitted to `/dev/fb0` |
+| **Animated demo (stage 5)** | **Working** | `tools/gpu/gpudemo/`: 600-frame rotating cube on the LCD, self-contained (no X), readback-verified per 60 frames |
+| Frame pacing | ~255 ms/frame | dominated by 4 MB `glReadPixels` + fb0 blit; no vsync (see stage 5) |
 
 ## 2. The end-state stack (target)
 
@@ -263,12 +266,58 @@ Two paths:
 thread + `veglSynchronousFlip`/display HAL.)
 
 ### Stage 5 — Desktop integration
-* Xorg GLX: Vivante GLX module (Freescale BSP `libGL` + X driver) is glibc —
-  favours architecture B; or
-* Wayland-less EGL compositing (e.g. `weston` on fbdev with EGL backend is
-  not blob-friendly) — likely **Xorg + GLX through the Vivante stack** or a
-  headless GPU render server (GLES apps on the tablet, buffers presented via
-  a small fbdev blitter).
+**Status: COMPLETE (2026-08-10)** — `tools/gpu/gpudemo/`. A self-contained
+animated demo proves the full pipeline on the LCD: 600 frames of a rotating
+cube (per-face colors) rendered by the stock GC13.20 stack into an 800×1280
+pbuffer, read back, byte-swapped to the panel's BGRA8888 format, and blitted
+to `/dev/fb0`. Frame-loop output (every 60 frames):
+`frames==60 avgms==255 center bg==255,255,0` — center-pixel color changes
+with rotation, readback-verified.
+
+What the demo build needed (three real bugs found, two of them crashes):
+
+* **GCC sincos fusion miscompile** (crash 1, SIGSEGV in libm `sincosf`):
+  `-O2` fused the `cosf`/`sinf` pairs into `sincosf`, but the call site
+  (gpudemo+0x10da0, `bl sincosf@plt`) never loaded r2 — the cos output
+  pointer came from garbage → NULL → libm+0x2b48 `str r2,[r3]` killed the
+  process. Core.7387, fault_addr 0x0. Fixed with `__attribute__((noinline))`
+  wrappers `_cosf`/`_sinf`; rebuilt binary has zero `sincosf@plt` refs.
+* **`.rodata` page-boundary overrun** (crash 2, SIGSEGV fault_addr 0x12000):
+  the four vertex arrays were `static const` → `.rodata` at the tail of the
+  RX segment (0x10000–0x12000). The blob's `gcoVERTEXARRAY_Bind`
+  (libGAL+0x4e37c) → `gcoOS_MemCopy` (libGAL+0x113b84) → libc `memcpy`
+  (libc+0x225f8, NEON `vld1.8` loop) copies client vertex data; the copy
+  from src 0x11ff8 ran past the mapping end → SEGV_MAPERR. Core.8264.
+  Fixed by dropping `const` → `.data` (backed by the 4 MB bss).
+* **Blob uniforms are broken** (black screen, no errors): attribute and
+  uniform locations collide — `pos`→1, `col`→0 AND `mv`→1, `proj`→0.
+  `glUniformMatrix4fv` silently no-ops, so `proj * mv * vec4(pos,1.0)`
+  rendered nothing (zero matrices → all vertices clipped). No GL error,
+  no crash. Workaround: rotate the 36 cube vertices **on the CPU** each
+  frame and keep the vertex shader uniform-free
+  (`gl_Position = vec4(pos, 1.0)`); the cube is pre-scaled to ±0.11 clip
+  space since there is no projection matrix. (Diagnosis path: remove depth
+  buffer + `GL_DEPTH_TEST` first — those were also suspect, but not the
+  cause.)
+* **No depth buffer**: with the broken `glClear` (stage 4 quirk), a depth
+  buffer can't be cleared, so `GL_LEQUAL` against garbage depth could cull
+  everything. The demo runs without `EGL_DEPTH_SIZE`/`GL_DEPTH_TEST` —
+  background quad first, cube second (painter's order).
+* **`FBIOPAN_DISPLAY` and `FBIOWAITFORVSYNC` are unsupported** on this
+  mmp-fb (ioctl ENOTTY). No page-flip or vsync: the demo always writes page
+  0 of the 3-page virtual framebuffer.
+* Frame pacing: ~255 ms/frame — the 4 MB `glReadPixels` + 4 MB memcpy to
+  fb0 dominates; the GPU draw itself is trivial. Fine for a demo; a
+  real compositor would present buffers directly instead of readback.
+
+Build pattern (bionic toolchain, see `tools/gpu/`): static crt0
+(`-e _start`), `-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0`, `-ldl -lm`,
+`-Wl,--hash-style=sysv --dynamic-linker /system/bin/linker -rpath
+/system/lib`. Run on device: `ulimit -c unlimited` first if you want cores.
+
+Remaining (stage 6 territory): open-source replacement (etnaviv DRM) or a
+real compositor path via gralloc/window surfaces; the native-window shim
+notes from stage 4 still apply.
 
 ### Stage 6 — Polish
 * ~~Version-verify against stock ANE2 blobs~~ DONE (exact build match).
@@ -286,6 +335,7 @@ thread + `veglSynchronousFlip`/display HAL.)
 | `tools/gpu/probe/` | Stage-1 probe: `src/galcore-probe.c`, `inc/` (kernel headers), `build.sh` |
 | `tools/gpu/galtest/` | Stage-3 test: `galcore-test.c`, `crte.S` (minimal `_start`), `build.sh` |
 | `tools/gpu/egltest/` | Stage-4 test: `egl-test.c` (EGL+GLES2 render + fb0 blit), `logshim.c` (LD_PRELOAD log shim), `crte.S`, `build.sh` |
+| `tools/gpu/gpudemo/` | Stage-5 demo: `gpudemo.c` (600-frame rotating cube → fb0), `crte.S`, `build.sh` |
 | `docs/12-gpu.md` | this document |
 
 Firmware provenance: `fw/SM-T231_1_20150911094727_d0bnw4d7b4_fac.zip`

@@ -5,9 +5,10 @@
 * **Goal:** a *real* Linux environment with a desktop, booted from the eMMC,
   using the stock bootloader. No Android runtime, no chroot-on-Android, no
   TWRP-as-init.
-* **Non-goal (impossible here):** GPU/3D. The Vivante GC1000 has no usable
-  open driver on a 3.10 kernel and we have no Samsung blob for this X/ABI.
-  Everything is software-rendered on the fbdev framebuffer.
+* **Non-goal:** was GPU/3D — but the stock Vivante blobs turned out to be
+  portable (see [12-gpu.md](12-gpu.md)): **GPU acceleration now works on
+  Alpine** (stages 0–5). Before that was proven, everything was
+  software-rendered on the fbdev framebuffer.
 
 ## Boot chain (what actually happens on power-on)
 
