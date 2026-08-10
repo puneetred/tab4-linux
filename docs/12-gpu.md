@@ -1,13 +1,14 @@
 # 12 — GPU acceleration: Vivante GC1000 via stock ROM blobs
 
-**Status: stages 0–3 complete (2026-08-09).** The kernel side already works
+**Status: stages 0–4 complete (2026-08-10).** The kernel side works
 (galcore 4.6.9.8290 loaded, `/dev/galcore` + `/dev/ion` present, contract
 probe verified on device). Clean stock blobs (`T231XXU0ANE2`) are extracted
 and version-coupling is proven. The bionic runtime compatibility layer
 (stage 2) is working on Alpine, and the stock **libGAL.so runs natively and
-round-trips real ioctls to the kernel** (stage 3) — HAL construct/destroy,
-chip identity, and video memory queries all succeed. Next: EGL bring-up on
-the framebuffer (stage 4).
+round-trips real ioctls to the kernel** (stage 3). **EGL 1.4 + GLES2 from
+the stock blobs now run on Alpine and render to the LCD**: offscreen
+triangles/pbuffers verified via readback, and a fullscreen 800×1280 GPU
+render is blitted to `/dev/fb0` (stage 4).
 
 This document is the master plan. Work proceeds piece by piece, each stage
 verifiable on the device.
@@ -29,6 +30,7 @@ verifiable on the device.
 | Version coupling | **PROVEN** | blob embeds `$VERSION$4.6.9:8290$` == kernel 4.6.9.8290 |
 | Bionic compat layer | **Working** | `/stage2` tree, `/system → /stage2`, `/dev/__properties__` fixed; mksh + toolbox native on Alpine |
 | **libGAL bring-up (stage 3)** | **Working** | stock `libGAL.so` dlopen'd from Alpine; `gcoOS_ModuleConstructor`/`gcoHAL_Construct`/queries OK; real ioctls to kernel |
+| **EGL/GLES2 (stage 4)** | **Working** | `libEGL_MRVL` + `libGLESv2_MRVL` (GC13.20) run on Alpine: display init, configs, contexts, pbuffers, shaders, draws, readback all OK; fullscreen render blitted to `/dev/fb0` |
 
 ## 2. The end-state stack (target)
 
@@ -206,13 +208,59 @@ device with the stock blob running on the bionic compat layer:
   output; no stdio). Exit code 0, clean exit.
 
 ### Stage 4 — EGL on the framebuffer
-Create an EGL context + surface. Two paths:
+**Status: COMPLETE (2026-08-10)** — `tools/gpu/egltest/`. The stock
+`libEGL_MRVL.so` + `libGLESv2_MRVL.so` now run on Alpine, and the GPU
+renders to the LCD. What it took:
+
+* **Missing dep**: `eglCreateContext` dlopens the system wrapper
+  `libGLESv2.so` → `libEGL.so` → `libGLES_trace.so` → **`libstlport.so`**
+  (Samsung's STL). Extracted from `system.raw.img` (debugfs) and deployed;
+  before that context creation failed with `gcvSTATUS_NOT_FOUND` (-19).
+* **Blob logging**: no logd socket on the device, so `__android_log_print`
+  went nowhere. `logshim.so` (LD_PRELOAD shim exporting the liblog entry
+  points, printing to stdout) made every internal Vivante trace visible —
+  this is what surfaced the libstlport chain and the "OES20 ===> GC Version
+  rls_pxa988_KK44_GC13.20" driver banner.
+* **Linker gotchas** (Samsung bionic 4.4 linker):
+  * `RTLD_NOW|RTLD_GLOBAL` → "invalid flags to dlopen: 102" — use plain
+    `RTLD_NOW` (galtest pattern).
+  * Shared libs need a **SysV DT_HASH**: without `-Wl,--hash-style=sysv` the
+    loader rejects with "empty/missing DT_HASH".
+  * EGL blobs live in `/system/lib/egl/` — dlopen the full path.
+* **ABI notes**: `eglInitialize`/`eglMakeCurrent`/`eglSwapBuffers` return
+  `EGLBoolean` (1), NOT `EGLint` error codes — treat return as bool, check
+  `eglGetError` separately. `eglChooseConfig` returns config **indices**
+  (small ints), not pointers.
+* **Verified pipeline** (all on device, readback-verified):
+  1. EGL 1.4, VENDOR "Vivante Corporation", full extension list.
+  2. Context + pbuffer + makeCurrent OK; shaders compile/link (GC13.20).
+  3. Fullscreen triangle → 64/64 green pixels; 800×1280 gradient render →
+     readback OK.
+  4. **fb0 blit**: render 800×1280, `glReadPixels` → RGBA→BGRA byte swap
+     (panel format `rgba 8/16,8/8,8/0,8/24` = BGRA8888), memcpy to
+     `/dev/fb0` mmap — 4,096,000 bytes verified on re-read. The LCD shows
+     the GPU-rendered gradient (backlight `brightness`=143/255).
+* **KNOWN QUIRK — `glClear` writes nothing**: `glClear(GL_COLOR_BUFFER_BIT)`
+  produces all-zero readback (before AND after successful draws) while
+  triangle draws on the same surface work perfectly. No GL errors, no kernel
+  faults, ioctls all succeed. The clear path in this Samsung stack silently
+  misses the surface target. Workaround: draw a fullscreen quad instead of
+  clearing. Under investigation; harmless for the current milestone.
+* Backlight: `/sys/class/backlight/panel/{brightness,max_brightness}`.
+
+Original plan (below) kept for history — the native-window shim was
+*not* needed for the milestone: rendering into an 800×1280 pbuffer +
+readback + fb0 blit bypasses gralloc/ANativeWindow entirely.
+Two paths:
 * Vivante's `libEGL` platform selection reads `/system/lib/egl/egl.cfg` and
   the platform via `gcoHAL`/`fbdev` entry points in these blobs — reverse
   engineer which platform backend these blobs support (likely only Android
   ANativeWindow → needs a minimal `gralloc` + buffer-present path to fbdev).
 * Or write a native-window shim: EGL renders into ion/gralloc buffers;
   a small host-side presenter blits the rendered buffer to `/dev/fb0`.
+(Still relevant later for real windowed compositing: `eglCreateWindowSurface`
+→ `veglGetWindowInfo` → ANativeWindow/gralloc; swap path uses a worker
+thread + `veglSynchronousFlip`/display HAL.)
 
 ### Stage 5 — Desktop integration
 * Xorg GLX: Vivante GLX module (Freescale BSP `libGL` + X driver) is glibc —
@@ -237,6 +285,7 @@ Create an EGL context + surface. Two paths:
 | `~/Documents/tab4/fw/` | FUS zip, AP tar.md5, `system.img`, `system.raw.img`, `check_sparse.py` |
 | `tools/gpu/probe/` | Stage-1 probe: `src/galcore-probe.c`, `inc/` (kernel headers), `build.sh` |
 | `tools/gpu/galtest/` | Stage-3 test: `galcore-test.c`, `crte.S` (minimal `_start`), `build.sh` |
+| `tools/gpu/egltest/` | Stage-4 test: `egl-test.c` (EGL+GLES2 render + fb0 blit), `logshim.c` (LD_PRELOAD log shim), `crte.S`, `build.sh` |
 | `docs/12-gpu.md` | this document |
 
 Firmware provenance: `fw/SM-T231_1_20150911094727_d0bnw4d7b4_fac.zip`
@@ -266,3 +315,11 @@ embedded md5) — deleted.
 6. **Version gate on EGL layer**: same `$VERSION$` string must also match in
    `libEGL_MRVL`/`libGLESv2_MRVL` — spot-check before stage 4 (they are the
    same firmware build, so expected OK).
+7. **`glClear` broken in the Samsung GLES2 blob (stage 4)**: color clears
+   write nothing (readback all-zero, no errors/faults); draws work. Any
+   consumer must draw fullscreen geometry instead of relying on clears.
+8. **EGL blobs pull the whole Android wrapper chain**: `libGLESv2_MRVL`
+   expects the system `libGLESv2.so`/`libEGL.so` wrappers (and
+   `libGLES_trace.so` → `libstlport.so`) to exist; the wrappers' dlopen
+   dispatch (egl.cfg) is what wires vendor libs together — all shipped in
+   stage 2, but any future blob update must re-check the closure.

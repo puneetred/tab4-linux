@@ -42,7 +42,7 @@ Android installation and is intended for hardware you are prepared to erase.
 | Power button | Partial | key events delivered; binding pending |
 | Home / Back / Recent | Partial | keycodes mapped; actions not finalized |
 | Wi-Fi (SD8887) | Not working | firmware installed; driver bring-up pending |
-| GPU acceleration | In progress | galcore 4.6.9.8290 loaded & probed; blobs verified (version-coupling proven); bionic runtime layer working; stock libGAL round-trips real ioctls (HAL construct + chip/memory queries OK) — [docs/12-gpu.md](docs/12-gpu.md) |
+| GPU acceleration | In progress | galcore 4.6.9.8290 loaded & probed; blobs verified (version-coupling proven); bionic runtime layer working; stock libGAL round-trips real ioctls (HAL construct + chip/memory queries OK); **stock EGL 1.4 + GLES2 render to `/dev/fb0`** — [docs/12-gpu.md](docs/12-gpu.md) |
 
 ## Requirements
 
@@ -117,9 +117,9 @@ See [`docs/README.md`](docs/README.md) for the full index. Notable entries:
   driver for kernel 3.10, so the stock Android blobs are being ported instead
   (`docs/12-gpu.md`). Kernel driver (galcore 4.6.9.8290) is loaded and the
   kernel↔blob contract is verified; the bionic runtime layer works on Alpine
-  and the stock `libGAL.so` already round-trips real ioctls (construct, chip
-  identity, video memory). Next milestone: EGL bring-up. Rendering remains
-  software until then.
+  and the stock `libGAL.so` round-trips real ioctls. **The stock EGL 1.4 +
+  GLES2 blobs now render on the GPU and blit to `/dev/fb0`** (stage 4 of 6).
+  Remaining: compositor integration (windowed surfaces/gralloc shim).
 * **Kernel 3.10.** Precludes systemd-based distributions (systemd requires
   ≥4.15). Init systems must be OpenRC, runit, or sysvinit.
 * **Wi-Fi** is not yet operational (see `docs/11-networking.md`).
