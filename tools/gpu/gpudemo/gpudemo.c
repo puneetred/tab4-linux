@@ -87,6 +87,7 @@ typedef void (*fn_glReadPixels)(int32_t x, int32_t y, int32_t w, int32_t h, uint
 #define GL_LINK_STATUS 0x8b82
 #define GL_FLOAT 0x1406
 #define GL_TRIANGLES 0x0004
+#define GL_TRIANGLE_FAN 0x0006
 #define GL_DEPTH_TEST 0x0b71
 #define GL_LEQUAL 0x0203
 #define GL_RGBA 0x1908
@@ -145,7 +146,7 @@ static float cubeCol[36 * 4] = {
 };
 
 /* fullscreen background quad at far depth (clear is broken in this blob) */
-static float bgPos[6 * 2] = { -1,-1, 3,-1, -1,3,  -1,3, 3,-1, 3,3 };
+static float bgPos[4 * 2] = { -1,-1, 3,-1, 3,3, -1,3 };
 static float bgCol[6 * 4] = {
     0.05f,0.05f,0.08f,1,  0.05f,0.05f,0.08f,1,  0.05f,0.05f,0.08f,1,
     0.05f,0.05f,0.08f,1,  0.05f,0.05f,0.08f,1,  0.05f,0.05f,0.08f,1,
@@ -314,25 +315,19 @@ int main(void)
         for (int f = 0; f < 6; f++) {
             if (zAvg[f] > zAvg[f0]) f0 = f;
         }
-        /* blob quirk: a frame renders only its first (fullscreen bg) and
-           last drawArrays, and only the LAST 6 verts of the last draw;
-           frames with fewer than 36 distinct face verts render nothing.
-           So: one 36-vert draw (5 other faces + the front face last). */
-        static float faceBuf[36 * 3];
-        static float faceCol[36 * 4];
-        for (int i = 0; i < 6; i++) {
-            int f = (f0 + i) % 6;
-            memcpy(faceBuf + 18 * i, rotCube + 18 * f, 18 * sizeof(float));
-            memcpy(faceCol + 24 * i, cubeCol + 24 * f, 24 * sizeof(float));
-        }
+        /* blob dedups consecutive drawArrays with the same
+           (mode, first, count): identical draws alternate skip/draw.
+           Make every draw distinct: bg = TRIANGLE_FAN (mode 6, 4 verts),
+           each face = (GL_TRIANGLES, first=6*f, count=6). */
         vertexAttribPointer((uint32_t)posLoc, 2, GL_FLOAT, 0, 0, bgPos);
         vertexAttribPointer((uint32_t)colLoc, 4, GL_FLOAT, 0, 0, bgCol);
         enableVertexAttribArray((uint32_t)posLoc);
         enableVertexAttribArray((uint32_t)colLoc);
-        drawArrays(GL_TRIANGLES, 0, 6);
-        vertexAttribPointer((uint32_t)posLoc, 3, GL_FLOAT, 0, 0, faceBuf);
-        vertexAttribPointer((uint32_t)colLoc, 4, GL_FLOAT, 0, 0, faceCol);
-        drawArrays(GL_TRIANGLES, 0, 36);
+        drawArrays(GL_TRIANGLE_FAN, 0, 4);
+        vertexAttribPointer((uint32_t)posLoc, 3, GL_FLOAT, 0, 0, rotCube);
+        vertexAttribPointer((uint32_t)colLoc, 4, GL_FLOAT, 0, 0, cubeCol);
+        for (int f = 0; f < 6; f++)
+            drawArrays(GL_TRIANGLES, 6 * f, 6);
         glFinish();
 
         uint32_t err = glGetError();

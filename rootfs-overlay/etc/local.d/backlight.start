@@ -1,0 +1,5 @@
+#!/bin/sh
+# Force panel backlight on at boot / local start
+test -w /sys/class/backlight/panel/brightness && echo 255 > /sys/class/backlight/panel/brightness
+test -w /sys/class/backlight/panel/bl_power && echo 0 > /sys/class/backlight/panel/bl_power
+exit 0

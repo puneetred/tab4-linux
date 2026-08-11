@@ -34,6 +34,27 @@ finger-0 onto the classic axes. With that, evdev reports
   `Invalid path` — libinput *requires* a udev-tagged device. Installing eudev
   (and letting it tag the node) is what unlocked libinput.
 
+## Gotcha: do NOT declare the touch as an explicit `InputDevice`
+
+event0 carries **both** touch axes and the Back/Recents keys. If you list it in a
+`ServerLayout` as an explicit `InputDevice` (evdev), Xorg opens the node twice
+(once as keyboard, once as pointer) and evdev rejects the second open:
+
+```
+(WW) evdev: touch: device file is duplicate. Ignoring.
+(EE) PreInit returned 8 for "touch"
+```
+
+Result: the device registers only as a **keyboard** (id X, type KEYBOARD) and
+touch produces **zero pointer motion**. Use **`AutoAddDevices` on + `InputClass`**
+instead — udev tags event0 `ID_INPUT_TOUCHSCREEN`, the `bt532 touch` InputClass
+binds it as a touchscreen, and `nav keys` routes the key events. See the shipped
+`10-t4.conf` and `udev-input.start`.
+
+Note: eudev on this board does **not** tag input nodes at boot by itself — run
+`udevadm trigger --subsystem-match=input --action=change` once (baked into
+`/etc/local.d/udev-input.start`) so the touchscreen match works after reboot.
+
 ## Verify
 
 ```sh

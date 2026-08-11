@@ -1,0 +1,4 @@
+#!/bin/sh
+# re-tag input devices so libinput/evdev classify the touchscreen
+udevadm trigger --subsystem-match=input --action=change 2>/dev/null
+exit 0

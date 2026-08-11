@@ -121,15 +121,20 @@ EOF
 
 echo "=== [60] Xorg config ==="
 mkdir -p "$ROOT"/etc/X11/xorg.conf.d
-# consolidated input+display config (learned on-device):
-# - evdev for touch (bt532 now emits ABS_X/Y+BTN_TOUCH via kernel patch)
-# - evdev keyboards for PMIC power key + gpio-keys (vol/home/back)
-# - AutoAddDevices off: udev probing path trips a musl ld.so a_crash on this stack
-# - no DefaultDepth: 16bpp path SIGILLs in shadowfb; keep fb native 32bpp
+# PROVEN-WORKING config (validated on-device; do not revert to explicit
+# InputDevice sections):
+# - AutoAddDevices ON + InputClass: explicit InputDevice entries make evdev
+#   open /dev/input/event0 twice (it carries BOTH touch axes and nav keys),
+#   which Xorg rejects as "device file is duplicate" -> PreInit 8 -> no pointer.
+# - udev must tag event0 as ID_INPUT_TOUCHSCREEN first; see udev-input.start
+#   in /etc/local.d (baked below). evdev then reports "Configuring as touchscreen".
+# - MatchIsTouchscreen catches only the touch node; MatchIsKeyboard routes the
+#   power key (event1) + gpio-keys (event6) to evdev keyboards.
+# - no DefaultDepth: 16bpp path SIGILLs in shadowfb; keep fb native 32bpp.
 cat > "$ROOT"/etc/X11/xorg.conf.d/10-t4.conf <<'EOF'
 Section "ServerFlags"
-    Option "AutoAddDevices" "false"
-    Option "AutoEnableDevices" "false"
+    Option "AutoAddDevices" "true"
+    Option "AutoEnableDevices" "true"
 EndSection
 Section "Device"
     Identifier "fb"
@@ -140,29 +145,37 @@ Section "Screen"
     Identifier "s0"
     Device "fb"
 EndSection
-Section "InputDevice"
-    Identifier "touch"
+Section "InputClass"
+    Identifier "bt532 touch"
+    MatchIsTouchscreen "on"
+    MatchDevicePath "/dev/input/event*"
     Driver "evdev"
-    Option "Device" "/dev/input/event0"
+    Option "EmulateThirdButton" "1"
 EndSection
-Section "InputDevice"
-    Identifier "powerkey"
+Section "InputClass"
+    Identifier "nav keys"
+    MatchIsKeyboard "on"
+    MatchDevicePath "/dev/input/event*"
     Driver "evdev"
-    Option "Device" "/dev/input/event1"
-EndSection
-Section "InputDevice"
-    Identifier "gpiokeys"
-    Driver "evdev"
-    Option "Device" "/dev/input/event6"
 EndSection
 Section "ServerLayout"
     Identifier "l0"
     Screen "s0"
-    InputDevice "touch"
-    InputDevice "powerkey"
-    InputDevice "gpiokeys"
 EndSection
 EOF
+
+echo "=== [60] udev input re-tag (touchscreen classification) ==="
+# eudev on this board does not tag input nodes at boot. Without the
+# ID_INPUT_TOUCHSCREEN tag, Xorg can't match the InputClass above and the
+# touch ends up keyboard-only. Trigger a re-tag at every boot.
+mkdir -p "$ROOT"/etc/local.d
+cat > "$ROOT"/etc/local.d/udev-input.start <<'EOF'
+#!/bin/sh
+# re-tag input devices so libinput/evdev classify the touchscreen
+udevadm trigger --subsystem-match=input --action=change 2>/dev/null
+exit 0
+EOF
+chmod +x "$ROOT"/etc/local.d/udev-input.start
 
 echo "=== [60] firstboot resize + usb gadget net ==="
 mkdir -p "$ROOT"/etc/local.d
